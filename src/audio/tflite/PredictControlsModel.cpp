@@ -17,6 +17,8 @@ limitations under the License.
 #include "audio/tflite/PredictControlsModel.h"
 #include "util/Constants.h"
 
+#include <cmath>
+
 namespace ddsp
 {
 
@@ -96,7 +98,7 @@ void PredictControlsModel::call (const AudioFeatures& input, SynthesisControls& 
 
     for (int i = 0; i < kHarmonicsSize; ++i)
     {
-        if (isnan (output.harmonics[i]))
+        if (std::isnan (output.harmonics[i]))
         {
             DBG ("is_nan");
             output.harmonics[i] = 0.f;

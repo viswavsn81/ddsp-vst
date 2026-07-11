@@ -44,11 +44,22 @@ add_subdirectory(externals/JUCE "${CMAKE_CURRENT_BINARY_DIR}/juce-bin" EXCLUDE_F
 add_subdirectory(externals/tensorflow/tensorflow/lite "${CMAKE_CURRENT_BINARY_DIR}/tensorflow-lite-bin" EXCLUDE_FROM_ALL)
 # TFLite CXX std needs to be explicitly set to C++20 in Visual Studio.
 target_compile_features(tensorflow-lite PUBLIC ${DDSP_CXX_STD})
-target_compile_options(tensorflow-lite PUBLIC -stdlib=libc++)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(tensorflow-lite PUBLIC -stdlib=libc++)
+endif()
+
+# GCC 13's stricter stringop-overflow analysis produces a false positive in
+# flatbuffers' reflection.cpp, which flatbuffers builds with -Werror.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND TARGET flatbuffers)
+    target_compile_options(flatbuffers PRIVATE -Wno-error=stringop-overflow)
+endif()
 
 # ------------------------- DDSP Binary Assets ------------------------ #
 
 juce_add_binary_data(Assets SOURCES ${DDSP_ASSETS})
+# On Linux, VST3s are shared objects (.so), so every static lib linked into
+# them must be position-independent.
+set_target_properties(Assets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # ---------------------------- DDSP Effect ---------------------------- #
 
