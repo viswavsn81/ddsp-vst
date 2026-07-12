@@ -161,6 +161,18 @@ ModelRangeVisualizerComponent::ModelRangeVisualizerComponent (DDSPAudioProcessor
     rangeBox.setMouseCursor (draggingHand);
     addAndMakeVisible (&rangeBox);
 
+    // LookAndFeel_V4's default tick/tickDisabled colours are tuned for its own dark theme and
+    // render near-invisibly (and identically for on/off) against this plugin's light theme, so
+    // both must be set explicitly -- textColourId alone isn't enough.
+    muteOutsideRangeButton.setColour (juce::ToggleButton::textColourId,
+                                      juce::Colour (DDSPColourPalette::kLabelTextColour));
+    muteOutsideRangeButton.setColour (juce::ToggleButton::tickColourId, juce::Colour (DDSPColourPalette::kMagenta));
+    muteOutsideRangeButton.setColour (juce::ToggleButton::tickDisabledColourId,
+                                      juce::Colour (DDSPColourPalette::kDarkerGrey));
+    addAndMakeVisible (muteOutsideRangeButton);
+    muteOutsideRangeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        audioProcessor.getValueTree(), "MuteOutsideRange", muteOutsideRangeButton);
+
     // TODO: Temporary fix for the child components being clipped at the component edges.
     // Need to figure out drawing with margin.
     setPaintingIsUnclipped (true);
@@ -243,19 +255,22 @@ void ModelRangeVisualizerComponent::paint (juce::Graphics& g)
     }
 }
 
-void ModelRangeVisualizerComponent::resized() { rangeBox.updateRangeBox(); }
+void ModelRangeVisualizerComponent::resized()
+{
+    rangeBox.updateRangeBox();
+
+    constexpr int buttonWidth = 150;
+    constexpr int buttonHeight = 24;
+    muteOutsideRangeButton.setBounds (getWidth() - buttonWidth - kPadding, kPadding, buttonWidth, buttonHeight);
+}
 
 bool ModelRangeVisualizerComponent::hitTest (int x, int y)
 {
-    bool ret = false;
-    auto r = rangeBox.getBounds();
+    const juce::Point<int> p (x, y);
 
-    if (r.contains (juce::Point<int> (x, y)))
-    {
-        ret = true;
-    }
-
-    return ret;
+    // Component::getComponentAt() gates all child hit-testing on this parent hitTest, so every
+    // clickable child region (not just rangeBox) must be included here or it becomes unclickable.
+    return rangeBox.getBounds().contains (p) || muteOutsideRangeButton.getBounds().contains (p);
 }
 
 void ModelRangeVisualizerComponent::timerCallback()

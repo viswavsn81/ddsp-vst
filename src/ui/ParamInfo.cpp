@@ -47,6 +47,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 
     layout.add (std::make_unique<juce::AudioParameterFloat> ("InputGain", "Input Gain", -0.5f, 0.5f, 0.0f));
     layout.add (std::make_unique<juce::AudioParameterFloat> ("InputPitch", "Input Pitch", -0.5f, 0.5f, 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterBool> ("MuteOutsideRange", "Mute Outside Range", false));
 
     // Scene-related params.
     const auto paramInfos = getSliderParamsInfo();

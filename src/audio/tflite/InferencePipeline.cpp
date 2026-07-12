@@ -74,6 +74,9 @@ void InferencePipeline::reset()
     noiseSynthesizer.reset();
     harmonicSynthesizer.reset();
 
+    pitchGateMuted = false;
+    pitchGateGain = 1.0f;
+
     modelInputBuffer.clear();
     synthesisBuffer.clear();
     resampledModelInputBuffer.clear();
@@ -129,6 +132,8 @@ void InferencePipeline::render()
     if (swappingModel)
     {
         currentPredictControlsModel = std::move (nextPredictControlsModel);
+        modelMinPitch_Hz = nextModelMinPitch_Hz;
+        modelMaxPitch_Hz = nextModelMaxPitch_Hz;
         swappingModel = false;
     }
 
@@ -164,6 +169,30 @@ void InferencePipeline::render()
         predictControlsInput.f0_norm -= *tree.getRawParameterValue ("InputPitch");
         predictControlsInput.loudness_norm -= *tree.getRawParameterValue ("InputGain");
 
+        // Update the mute-outside-range gate. Hysteresis: muting requires overshooting the
+        // model's valid pitch range by kPitchGateHysteresisRatio (~1 semitone), but unmuting
+        // only requires returning to the boundary itself -- this avoids chatter right at the
+        // edge while keeping the range box's boundary meaningful.
+        const bool muteOutsideRangeEnabled = *tree.getRawParameterValue ("MuteOutsideRange") > 0.5f;
+        const bool hasValidPitchRange = modelMaxPitch_Hz > modelMinPitch_Hz;
+        if (muteOutsideRangeEnabled && hasValidPitchRange)
+        {
+            const float f0Hz = predictControlsInput.f0_hz;
+            if (! pitchGateMuted)
+            {
+                pitchGateMuted = f0Hz < modelMinPitch_Hz / kPitchGateHysteresisRatio
+                                 || f0Hz > modelMaxPitch_Hz * kPitchGateHysteresisRatio;
+            }
+            else
+            {
+                pitchGateMuted = ! (f0Hz >= modelMinPitch_Hz && f0Hz <= modelMaxPitch_Hz);
+            }
+        }
+        else
+        {
+            pitchGateMuted = false;
+        }
+
         currentPredictControlsModel->call (predictControlsInput, synthesisInput);
 
         synthesisInput.amplitude *= *tree.getRawParameterValue ("HarmonicGain");
@@ -175,9 +204,11 @@ void InferencePipeline::render()
 
         const auto& noiseOutput = noiseSynthesizer.render (synthesisInput.noiseAmps);
 
+        const float pitchGateTarget = pitchGateMuted ? 0.0f : 1.0f;
         for (int i = 0; i < synthesisBuffer.getNumSamples(); ++i)
         {
-            synthesisBuffer.getWritePointer (0)[i] = harmonicOutput[i] + noiseOutput[i];
+            pitchGateGain += juce::jlimit (-kPitchGateGainStep, kPitchGateGainStep, pitchGateTarget - pitchGateGain);
+            synthesisBuffer.getWritePointer (0)[i] = (harmonicOutput[i] + noiseOutput[i]) * pitchGateGain;
         }
 
         outputInterpolator.process (kModelSampleRate_Hz / sampleRate,
@@ -195,6 +226,10 @@ void InferencePipeline::hiResTimerCallback() { render(); }
 
 void InferencePipeline::loadModel (const ModelInfo& mi)
 {
+    const auto metadata = PredictControlsModel::getMetadata (mi);
+    nextModelMinPitch_Hz = metadata.minPitch_Hz;
+    nextModelMaxPitch_Hz = metadata.maxPitch_Hz;
+
     nextPredictControlsModel = std::make_unique<PredictControlsModel> (mi);
     swappingModel = true;
 }

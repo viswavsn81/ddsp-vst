@@ -62,4 +62,12 @@ inline constexpr std::string_view kInfoUrl = "https://g.co/magenta/ddsp-vst-help
 constexpr float kPitchRangeMin_Hz = 8.18f; // midi 0
 constexpr float kPitchRangeMax_Hz = 12543.84f; // midi 127
 
+// Mute-outside-range pitch gate.
+// Ratio corresponding to one semitone (2^(1/12)), used as the hysteresis margin beyond the
+// model's valid pitch range before the gate mutes: the pitch must overshoot the boundary by
+// this ratio to trigger muting, but only needs to return to the boundary itself to unmute.
+constexpr float kPitchGateHysteresisRatio = 1.0594630943592953f;
+constexpr float kPitchGateFadeTime_ms = 15.0f;
+constexpr float kPitchGateGainStep = 1.0f / (kPitchGateFadeTime_ms * 0.001f * kModelSampleRate_Hz);
+
 } // namespace ddsp

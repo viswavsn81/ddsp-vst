@@ -78,6 +78,9 @@ private:
     std::list<float> loudnessHistoryBuffer;
     juce::LinearSmoothedValue<float> loudnessSmoother;
 
+    juce::ToggleButton muteOutsideRangeButton { "Mute Outside Range" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> muteOutsideRangeAttachment;
+
     friend class DraggableRangeBox;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ModelRangeVisualizerComponent)

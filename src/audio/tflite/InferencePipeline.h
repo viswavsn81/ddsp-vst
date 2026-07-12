@@ -58,6 +58,19 @@ private:
     std::atomic<float> currentRMS = { 0.0f };
     std::atomic<bool> swappingModel = false;
 
+    // Model's valid pitch range (Hz), used by the mute-outside-range gate below. Staged
+    // alongside nextPredictControlsModel and swapped into the active values on the audio
+    // thread in render(), guarded by the same swappingModel flag -- no separate atomics
+    // needed since these plain floats never cross threads outside of that handoff.
+    float nextModelMinPitch_Hz = 0.0f;
+    float nextModelMaxPitch_Hz = 0.0f;
+    float modelMinPitch_Hz = 0.0f;
+    float modelMaxPitch_Hz = 0.0f;
+
+    // Mute-outside-range gate state. Touched only on the audio thread inside render().
+    bool pitchGateMuted = false;
+    float pitchGateGain = 1.0f;
+
     void changeModel();
 
     // Param state.
