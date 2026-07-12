@@ -41,6 +41,21 @@ private:
     juce::Point<int> lastMousePosition;
 };
 
+// A thin, invisible drag handle sitting on one edge of the outer tolerance box. Dragging it
+// horizontally grows/shrinks that edge's pitch margin; double-clicking resets it to zero.
+class ToleranceEdgeHandle : public juce::Component
+{
+public:
+    ToleranceEdgeHandle (ModelRangeVisualizerComponent& o, bool isLowEdge);
+
+    void mouseDrag (const juce::MouseEvent& e) override;
+    void mouseDoubleClick (const juce::MouseEvent& e) override;
+
+private:
+    ModelRangeVisualizerComponent& owner;
+    bool isLowEdge;
+};
+
 class ModelRangeVisualizerComponent : public juce::Component, public juce::Timer, public juce::ChangeListener
 {
 public:
@@ -56,6 +71,11 @@ public:
 
     void setModelMetadata (const ddsp::PredictControlsModel::Metadata& metadata);
     void modelRangeChanged();
+
+    void updateToleranceBox();
+    juce::Rectangle<float> getOuterRangeRect (float pitchOffset, float loudnessOffset) const;
+    void dragToleranceEdge (bool isLowEdge, juce::Point<int> positionInThis);
+    void resetToleranceEdge (bool isLowEdge);
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster* b) override;
@@ -80,6 +100,16 @@ private:
 
     juce::ToggleButton muteOutsideRangeButton { "Mute Outside Range" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> muteOutsideRangeAttachment;
+
+    // Outer tolerance box: the model's native pitch range expanded by these two independent,
+    // user-draggable margins (semitones). Defaults to 0 -- i.e. outer box == inner box -- until
+    // the user drags an edge handle.
+    float outerPitchMarginLowSemitones = 0.0f;
+    float outerPitchMarginHighSemitones = 0.0f;
+    juce::ParameterAttachment outerPitchMarginLowAttach;
+    juce::ParameterAttachment outerPitchMarginHighAttach;
+    ToleranceEdgeHandle toleranceLowHandle;
+    ToleranceEdgeHandle toleranceHighHandle;
 
     friend class DraggableRangeBox;
 

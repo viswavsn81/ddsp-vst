@@ -169,23 +169,30 @@ void InferencePipeline::render()
         predictControlsInput.f0_norm -= *tree.getRawParameterValue ("InputPitch");
         predictControlsInput.loudness_norm -= *tree.getRawParameterValue ("InputGain");
 
-        // Update the mute-outside-range gate. Hysteresis: muting requires overshooting the
-        // model's valid pitch range by kPitchGateHysteresisRatio (~1 semitone), but unmuting
-        // only requires returning to the boundary itself -- this avoids chatter right at the
-        // edge while keeping the range box's boundary meaningful.
+        // Update the mute-outside-range gate. The gate boundary is the outer tolerance box
+        // (the model's native range expanded by the user-adjustable margins below), not the
+        // inner box itself -- notes between the inner and outer boundaries are never muted.
+        // Hysteresis: muting requires overshooting the outer boundary by
+        // kPitchGateHysteresisRatio (~1 semitone), but unmuting only requires returning to the
+        // outer boundary itself -- this avoids chatter right at the edge.
         const bool muteOutsideRangeEnabled = *tree.getRawParameterValue ("MuteOutsideRange") > 0.5f;
         const bool hasValidPitchRange = modelMaxPitch_Hz > modelMinPitch_Hz;
         if (muteOutsideRangeEnabled && hasValidPitchRange)
         {
+            const float outerMinPitch_Hz =
+                offsetPitch (modelMinPitch_Hz, -*tree.getRawParameterValue ("OuterPitchMarginLow"));
+            const float outerMaxPitch_Hz =
+                offsetPitch (modelMaxPitch_Hz, *tree.getRawParameterValue ("OuterPitchMarginHigh"));
+
             const float f0Hz = predictControlsInput.f0_hz;
             if (! pitchGateMuted)
             {
-                pitchGateMuted = f0Hz < modelMinPitch_Hz / kPitchGateHysteresisRatio
-                                 || f0Hz > modelMaxPitch_Hz * kPitchGateHysteresisRatio;
+                pitchGateMuted = f0Hz < outerMinPitch_Hz / kPitchGateHysteresisRatio
+                                 || f0Hz > outerMaxPitch_Hz * kPitchGateHysteresisRatio;
             }
             else
             {
-                pitchGateMuted = ! (f0Hz >= modelMinPitch_Hz && f0Hz <= modelMaxPitch_Hz);
+                pitchGateMuted = ! (f0Hz >= outerMinPitch_Hz && f0Hz <= outerMaxPitch_Hz);
             }
         }
         else

@@ -112,6 +112,18 @@ juce::Rectangle<float> DraggableRangeBox::getModelRangeRect (float pitchOffset, 
 }
 
 //==============================================================================
+ToleranceEdgeHandle::ToleranceEdgeHandle (ModelRangeVisualizerComponent& o, bool isLow) : owner (o), isLowEdge (isLow)
+{
+}
+
+void ToleranceEdgeHandle::mouseDrag (const juce::MouseEvent& e)
+{
+    owner.dragToleranceEdge (isLowEdge, owner.getLocalPoint (this, e.getPosition()));
+}
+
+void ToleranceEdgeHandle::mouseDoubleClick (const juce::MouseEvent&) { owner.resetToleranceEdge (isLowEdge); }
+
+//==============================================================================
 ModelRangeVisualizerComponent::ModelRangeVisualizerComponent (DDSPAudioProcessor& processor)
     : audioProcessor (processor),
       rangeBox (*this),
@@ -128,7 +140,23 @@ ModelRangeVisualizerComponent::ModelRangeVisualizerComponent (DDSPAudioProcessor
                                 const juce::ScopedValueSetter<bool> svs (ignoreCallbacks, true);
                                 modelLoudnessOffset = loudnessOffset;
                                 rangeBox.updateRangeBox();
-                            })
+                            }),
+      outerPitchMarginLowAttach (*processor.getValueTree().getParameter ("OuterPitchMarginLow"),
+                                 [this] (float margin)
+                                 {
+                                     const juce::ScopedValueSetter<bool> svs (ignoreCallbacks, true);
+                                     outerPitchMarginLowSemitones = margin;
+                                     updateToleranceBox();
+                                 }),
+      outerPitchMarginHighAttach (*processor.getValueTree().getParameter ("OuterPitchMarginHigh"),
+                                  [this] (float margin)
+                                  {
+                                      const juce::ScopedValueSetter<bool> svs (ignoreCallbacks, true);
+                                      outerPitchMarginHighSemitones = margin;
+                                      updateToleranceBox();
+                                  }),
+      toleranceLowHandle (*this, true),
+      toleranceHighHandle (*this, false)
 {
     pitchHistoryBuffer.resize (kNumTrails, 0.0f);
 
@@ -161,6 +189,12 @@ ModelRangeVisualizerComponent::ModelRangeVisualizerComponent (DDSPAudioProcessor
     rangeBox.setMouseCursor (draggingHand);
     addAndMakeVisible (&rangeBox);
 
+    juce::MouseCursor resizeCursor (juce::MouseCursor::LeftRightResizeCursor);
+    toleranceLowHandle.setMouseCursor (resizeCursor);
+    toleranceHighHandle.setMouseCursor (resizeCursor);
+    addAndMakeVisible (toleranceLowHandle);
+    addAndMakeVisible (toleranceHighHandle);
+
     // LookAndFeel_V4's default tick/tickDisabled colours are tuned for its own dark theme and
     // render near-invisibly (and identically for on/off) against this plugin's light theme, so
     // both must be set explicitly -- textColourId alone isn't enough.
@@ -182,6 +216,8 @@ ModelRangeVisualizerComponent::ModelRangeVisualizerComponent (DDSPAudioProcessor
     // Send initial update(s).
     pitchOffsetAttach.sendInitialUpdate();
     loudnessOffsetAttach.sendInitialUpdate();
+    outerPitchMarginLowAttach.sendInitialUpdate();
+    outerPitchMarginHighAttach.sendInitialUpdate();
 
     startTimer (intervalMs);
 }
@@ -221,6 +257,16 @@ void ModelRangeVisualizerComponent::paint (juce::Graphics& g)
 
     drawBackground (g, width, height);
 
+    // Outer tolerance box: drawn behind the inner box as a soft fill only (no outline), so it
+    // reads as a halo around the crisp inner reference box rather than competing with it. Must
+    // use the same (modelPitchOffset, modelLoudnessOffset) the inner box's actual draggable
+    // bounds and this box's own drag handles use (updateToleranceBox()), not (0, 0) -- otherwise
+    // this fill stays anchored to the untranslated position while the inner box and the handles
+    // track the user's drag, making it look like a second, disconnected box.
+    auto outerRangeBoxWithOffset = getOuterRangeRect (modelPitchOffset, modelLoudnessOffset);
+    g.setColour (juce::Colour (DDSPColourPalette::kMagenta).withMultipliedAlpha (0.08f));
+    g.fillRoundedRectangle (outerRangeBoxWithOffset.reduced (2), kRoundedRectangleCornerSize);
+
     auto rangeBoxOriginal = rangeBox.getModelRangeRect (0.0f, 0.0f);
 
     g.setColour (juce::Colour (DDSPColourPalette::kMagenta));
@@ -258,6 +304,7 @@ void ModelRangeVisualizerComponent::paint (juce::Graphics& g)
 void ModelRangeVisualizerComponent::resized()
 {
     rangeBox.updateRangeBox();
+    updateToleranceBox();
 
     constexpr int buttonWidth = 150;
     constexpr int buttonHeight = 24;
@@ -270,7 +317,8 @@ bool ModelRangeVisualizerComponent::hitTest (int x, int y)
 
     // Component::getComponentAt() gates all child hit-testing on this parent hitTest, so every
     // clickable child region (not just rangeBox) must be included here or it becomes unclickable.
-    return rangeBox.getBounds().contains (p) || muteOutsideRangeButton.getBounds().contains (p);
+    return rangeBox.getBounds().contains (p) || muteOutsideRangeButton.getBounds().contains (p)
+           || toleranceLowHandle.getBounds().contains (p) || toleranceHighHandle.getBounds().contains (p);
 }
 
 void ModelRangeVisualizerComponent::timerCallback()
@@ -305,6 +353,89 @@ void ModelRangeVisualizerComponent::setModelMetadata (const ddsp::PredictControl
     modelLoudnessRangeMaxNorm = ddsp::normalizedLoudness (metadata.maxPower_dB);
 
     rangeBox.updateRangeBox();
+    updateToleranceBox();
+}
+
+juce::Rectangle<float> ModelRangeVisualizerComponent::getOuterRangeRect (float pitchOffset, float loudnessOffset) const
+{
+    const float width = getWidth();
+    const float height = getHeight();
+
+    // Pitch-only tolerance: the outer box extends the inner box's pitch edges by the two
+    // independent margins (converted from semitones to normalized units), but uses the same
+    // loudness bounds as the inner box.
+    const float marginLowNorm = outerPitchMarginLowSemitones / ddsp::kMidiPitchRange;
+    const float marginHighNorm = outerPitchMarginHighSemitones / ddsp::kMidiPitchRange;
+
+    const float xStart = (modelPitchRangeMinNorm + pitchOffset - marginLowNorm) * width;
+    const float xEnd = (modelPitchRangeMaxNorm + pitchOffset + marginHighNorm) * width;
+
+    const float yStart = height - (modelLoudnessRangeMaxNorm + loudnessOffset) * height;
+    const float yEnd = height - (modelLoudnessRangeMinNorm + loudnessOffset) * height;
+
+    return { xStart, yStart, xEnd - xStart, yEnd - yStart };
+}
+
+void ModelRangeVisualizerComponent::updateToleranceBox()
+{
+    const auto outerRect = getOuterRangeRect (modelPitchOffset, modelLoudnessOffset);
+
+    constexpr int handleWidth = 10;
+    toleranceLowHandle.setBounds (
+        juce::Rectangle<float> (
+            outerRect.getX() - handleWidth / 2.0f, outerRect.getY(), (float) handleWidth, outerRect.getHeight())
+            .toNearestInt());
+    toleranceHighHandle.setBounds (
+        juce::Rectangle<float> (
+            outerRect.getRight() - handleWidth / 2.0f, outerRect.getY(), (float) handleWidth, outerRect.getHeight())
+            .toNearestInt());
+
+    repaint();
+}
+
+void ModelRangeVisualizerComponent::dragToleranceEdge (bool isLowEdge, juce::Point<int> positionInThis)
+{
+    const float width = getWidth();
+    if (width <= 0.0f)
+        return;
+
+    const float draggedNorm = positionInThis.getX() / width;
+
+    if (isLowEdge)
+    {
+        const float innerEdgeNorm = modelPitchRangeMinNorm + modelPitchOffset;
+        const float marginNorm = innerEdgeNorm - draggedNorm;
+        outerPitchMarginLowSemitones = juce::jlimit (0.0f, 24.0f, marginNorm * ddsp::kMidiPitchRange);
+    }
+    else
+    {
+        const float innerEdgeNorm = modelPitchRangeMaxNorm + modelPitchOffset;
+        const float marginNorm = draggedNorm - innerEdgeNorm;
+        outerPitchMarginHighSemitones = juce::jlimit (0.0f, 24.0f, marginNorm * ddsp::kMidiPitchRange);
+    }
+
+    updateToleranceBox();
+
+    if (isLowEdge)
+        outerPitchMarginLowAttach.setValueAsCompleteGesture (outerPitchMarginLowSemitones);
+    else
+        outerPitchMarginHighAttach.setValueAsCompleteGesture (outerPitchMarginHighSemitones);
+}
+
+void ModelRangeVisualizerComponent::resetToleranceEdge (bool isLowEdge)
+{
+    if (isLowEdge)
+    {
+        outerPitchMarginLowSemitones = 0.0f;
+        outerPitchMarginLowAttach.setValueAsCompleteGesture (0.0f);
+    }
+    else
+    {
+        outerPitchMarginHighSemitones = 0.0f;
+        outerPitchMarginHighAttach.setValueAsCompleteGesture (0.0f);
+    }
+
+    updateToleranceBox();
 }
 
 void ModelRangeVisualizerComponent::modelRangeChanged()

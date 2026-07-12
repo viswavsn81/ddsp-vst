@@ -24,6 +24,7 @@ namespace ddsp
 
 // Midi-related magic numbers.
 static constexpr float kSemitonesPerOctave = 12.0f;
+static constexpr float kMidiPitchRange = 127.0f;
 static constexpr float kMidiNoteA4 = 69.0f;
 static constexpr float kFreqA4_Hz = 440.f;
 // Midi pitch bend messages instruct the synthesizer to shift by a small interval.
@@ -49,7 +50,7 @@ static inline float normalizedPitch (float pitch_Hz)
 static inline float normalizedLoudness (float dB) { return (dB / 80.0f) + 1.0f; }
 
 // Helper methods.
-static inline float offsetPitch (float pitch, int semitoneOffset)
+static inline float offsetPitch (float pitch, float semitoneOffset)
 {
     return pitch * std::pow (2, semitoneOffset / kSemitonesPerOctave);
 }
